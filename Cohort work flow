@@ -1,0 +1,412 @@
+
+
+
+
+#### This first part excluded those who had cancer diagnosis prior to being recruited
+
+those who had ICD-10 C56 (ovary), C57.0 ( fallopian tube ) those who had ICD-10 C56 (ovary), C57.0 ( fallopian tube ) ,  C48.1, C48.2 ( peritoneum) prior to the recruitment date – The recruitment date was considered from reception data of attending the assessment centre instance 0 
+,     
+
+             
+```r
+pkg <- c("data.table", "dplyr", "ggplot2", "janitor", "bit64")
+
+# Identify uninstalled packages that are required
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+# Install any packages from the list that are not currently installed
+if (length(new.pkg)) {
+  install.packages(new.pkg, repos = "http://cran.rstudio.com")
+}
+
+# Load packages
+library(data.table) # fast and efficient data handling
+library(dplyr) # for data manipulation
+library(ggplot2) # for data visualization
+library(janitor) # data cleaning utilities
+
+install.packages("tidyr")                 # skip if already installed
+library(dplyr); library(tidyr); library(stringr)
+
+
+
+system("ls -lah /mnt/project")
+data <- fread("/mnt/project/cohort-builder_2025-08-28_data.csv")
+class(data)
+colnames(data)
+unique(data$Sex)
+data_female <- data[data$Sex == "Female", ]
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+df <- data_female                  # your data frame
+eid_col <- "Participant ID"            # change if your ID column is named differently
+
+# Find column names for ICD-10 (40006), diagnosis date (40005), and recruitment date (53)
+icd_cols   <- grep("^(p40006_i\\d+|Type of cancer: ICD10 \\| Instance \\d+)$", names(df), value = TRUE)
+date_cols  <- grep("^(p40005_i\\d+|Date of cancer diagnosis \\| Instance \\d+)$", names(df), value = TRUE)
+recruit_col <- if ("p53_i0" %in% names(df)) "p53_i0" else "Date of attending assessment centre | Instance 0"
+
+# Helper: extract instance index (0..21) from column names
+get_instance <- function(nm){
+  if (grepl("_i\\d+$", nm)) as.integer(sub(".*_i(\\d+)$", "\\1", nm))
+  else as.integer(sub(".*Instance\\s+(\\d+)$", "\\1", nm))
+}
+
+# Long tables for ICD and dx date, matched by instance
+icd_long <- df %>%
+  select(all_of(c(eid_col, recruit_col, icd_cols))) %>%
+  pivot_longer(cols = all_of(icd_cols), names_to = "icd_col", values_to = "icd_code") %>%
+  mutate(instance = vapply(icd_col, get_instance, integer(1)))
+
+date_long <- df %>%
+  select(all_of(c(eid_col, date_cols))) %>%
+  pivot_longer(cols = all_of(date_cols), names_to = "date_col", values_to = "dx_date") %>%
+  mutate(instance = vapply(date_col, get_instance, integer(1))) %>%
+  select(all_of(eid_col), instance, dx_date)
+
+long <- icd_long %>%
+  left_join(date_long, by = c(eid_col, "instance")) %>%
+  mutate(
+    recruit_date = as.Date(.data[[recruit_col]]),
+    dx_date      = as.Date(dx_date),
+    icd_code     = toupper(trimws(as.character(icd_code)))
+  )
+
+normalize_icd10 <- function(x){
+  x <- toupper(trimws(as.character(x)))
+  code <- sub("\\s.*$", "", x)                         # "C09.9 TONSIL..." -> "C09.9"
+  # normalize condensed forms like C570 -> C57.0
+  code <- sub("^([A-Z][0-9]{2})([0-9A-Z])$", "\\1.\\2", code, perl = TRUE)
+  code
+}
+
+is_target_code <- function(x){
+  code <- normalize_icd10(x)
+  # One vectorized regex that matches any of the target sites
+  grepl("^(C56(\\.|$)|C57\\.0(\\.|$)|C48\\.(1|2)(\\.|$))", code)
+  #            ^C56.*          ^C57.0.*             ^C48.1/2.*
+}
+
+
+to_exclude_ids <- long %>%
+  mutate(
+    icd_code_norm = normalize_icd10(icd_code),
+    target_site   = is_target_code(icd_code_norm)
+  ) %>%
+  filter(
+    target_site,
+    !is.na(dx_date), !is.na(recruit_date),
+    dx_date < recruit_date
+  ) %>%
+  distinct(.data[[eid_col]]) %>%
+  pull()
+
+excluded <- df %>% filter(.data[[eid_col]] %in% to_exclude_ids)
+
+
+# Final splits
+excluded <- df %>% filter(.data[[eid_col]] %in% to_exclude_ids)
+kept     <- df %>% filter(!.data[[eid_col]] %in% to_exclude_ids)
+
+
+```
+
+### Now excluding those who had cancer diagnosis withing 365 days after recrutment 
+
+```r
+library(dplyr)
+colnames (kept)
+
+eid_col <- "Participant ID"    # change if your ID column is named differently
+
+# If needed, re-define the helpers (safe to keep if already defined)
+normalize_icd10 <- function(x){
+  x <- toupper(trimws(as.character(x)))
+  code <- sub("\\s.*$", "", x)                         # drop description
+  code <- sub("^([A-Z][0-9]{2})([0-9A-Z])$", "\\1.\\2", code, perl = TRUE)  # C570 -> C57.0
+  code
+}
+is_target_code <- function(x){
+  code <- normalize_icd10(x)
+  grepl("^(C56(\\.|$)|C57\\.0(\\.|$)|C48\\.(1|2)(\\.|$))", code)
+}
+
+# --- Exclude incident cases within 12 months after recruitment ---
+to_exclude_ids_12m <- long %>%
+  # work only on those currently kept
+  filter(.data[[eid_col]] %in% kept[[eid_col]]) %>%
+  # ensure classes & normalize codes
+  mutate(
+    dx_date      = as.Date(dx_date),
+    recruit_date = as.Date(recruit_date),
+    target_site  = is_target_code(icd_code),
+    window_end   = recruit_date + 365    # ≈ 12 months; see note below for lubridate
+  ) %>%
+  filter(
+    target_site,
+    !is.na(dx_date), !is.na(recruit_date),
+    dx_date >= recruit_date,            # AFTER (or on) recruitment
+    dx_date <= window_end               # WITHIN 12 months
+  ) %>%
+  distinct(.data[[eid_col]]) %>%
+  pull()
+
+# Split
+excluded_2 <- kept %>% filter(.data[[eid_col]] %in% to_exclude_ids_12m)
+kept_2     <- kept %>% filter(!(.data[[eid_col]] %in% to_exclude_ids_12m))
+
+```
+
+### Now excluding those with ICD-9 who had cancers prior to recruitment and within 12 months of recruitment 
+```r
+colnames(kept_2)
+levels(kept_2$Type of cancer: ICD9 | Instance 0)
+summary(kept_2)
+unique(kept_2$`Type of cancer: ICD10 | Instance 0`)
+
+
+library(dplyr)
+
+# --- Settings ---
+df_icd9 <- kept_2
+eid_col    <- "Participant ID"  # your ID column
+recruit_col <- if ("p53_i0" %in% names(df_icd9)) "p53_i0" else "Date of attending assessment centre | Instance 0"
+
+# Find ICD-9 and diagnosis date columns (by instance)
+icd9_cols  <- grep("^(p40013_i\\d+|Type of cancer: ICD9 \\| Instance \\d+)$",
+                   names(df_icd9), value = TRUE)
+date_cols9 <- grep("^(p40005_i\\d+|Date of cancer diagnosis \\| Instance \\d+)$",
+                   names(df_icd9), value = TRUE)
+
+# Helper to extract the instance index from column names
+get_instance <- function(nm){
+  if (grepl("_i\\d+$", nm)) as.integer(sub(".*_i(\\d+)$", "\\1", nm))
+  else as.integer(sub(".*Instance\\s+(\\d+)$", "\\1", nm))
+}
+
+# Normalize ICD-9 like "1830 Malignant..." or "183.0 Ovary" -> compare on "1830"
+normalize_icd9_to_nodot <- function(x){
+  code <- sub("\\s.*$", "", toupper(trimws(as.character(x))))   # keep token before first space
+  code <- gsub("[^0-9.]", "", code)                             # keep digits and dot
+  gsub("\\.", "", code)                                         # remove dot: "183.0" -> "1830"
+}
+is_target_icd9 <- function(x){
+  nodot <- normalize_icd9_to_nodot(x)
+  nodot %in% c("1580","1830","1832")
+}
+
+# --- Build long tables matched by instance (use tidyr::pivot_longer without attaching) ---
+icd9_long <- df_icd9 %>%
+  select(all_of(c(eid_col, recruit_col, icd9_cols))) %>%
+  tidyr::pivot_longer(cols = all_of(icd9_cols),
+                      names_to = "icd9_col", values_to = "icd9_raw") %>%
+  mutate(instance = vapply(icd9_col, get_instance, integer(1)))
+
+date_long9 <- df_icd9 %>%
+  select(all_of(c(eid_col, date_cols9))) %>%
+  tidyr::pivot_longer(cols = all_of(date_cols9),
+                      names_to = "date_col", values_to = "dx_date") %>%
+  mutate(instance = vapply(date_col, get_instance, integer(1))) %>%
+  select(all_of(eid_col), instance, dx_date)
+
+long9 <- icd9_long %>%
+  left_join(date_long9, by = c(eid_col, "instance")) %>%
+  mutate(
+    recruit_date = as.Date(.data[[recruit_col]]),
+    dx_date      = as.Date(dx_date),
+    target_icd9  = is_target_icd9(icd9_raw)
+  )
+
+## ---------- A) Exclude if ICD-9 target BEFORE recruitment ----------
+ids_pre9 <- long9 %>%
+  filter(target_icd9,
+         !is.na(dx_date), !is.na(recruit_date),
+         dx_date < recruit_date) %>%
+  distinct(.data[[eid_col]]) %>% pull()
+
+excluded_pre9 <- df_icd9 %>% filter(.data[[eid_col]] %in% ids_pre9)
+kept_tmp      <- df_icd9 %>% filter(!(.data[[eid_col]] %in% ids_pre9))
+
+## ---------- B) Exclude if ICD-9 target WITHIN 12 months after recruitment ----------
+ids_12m9 <- long9 %>%
+  filter(.data[[eid_col]] %in% kept_tmp[[eid_col]]) %>%
+  mutate(window_end = recruit_date + 365) %>%   # ~12 months in days
+  filter(target_icd9,
+         !is.na(dx_date), !is.na(recruit_date),
+         dx_date >= recruit_date,
+         dx_date <= window_end) %>%
+  distinct(.data[[eid_col]]) %>% pull()
+
+excluded_12m9 <- kept_tmp %>% filter(.data[[eid_col]] %in% ids_12m9)
+
+## ---------- Outputs ----------
+excluded_3 <- bind_rows(excluded_pre9, excluded_12m9) %>%
+  distinct(.data[[eid_col]], .keep_all = TRUE)
+
+kept_3 <- kept_tmp %>% filter(!(.data[[eid_col]] %in% ids_12m9))
+
+```
+
+
+### Now I excluded  all other cancers keeping only non melanoma skin cancer  C44 ( This is for the ICD-10 ) those with these cancers at the point of recruitment and 12 months after recruitment.
+```r
+library(data.table)
+library(lubridate)
+
+DT <- as.data.table(Cancer_registery)
+
+# ---- Find ID column (adjust the list if needed) ----
+id_candidates <- c("eid", "Participant ID", "participant_id")
+id_col <- id_candidates[id_candidates %in% names(DT)][1]
+if (is.na(id_col)) stop("Couldn't find an ID column. Set id_col <- 'your_id_col'.")
+
+# ---- Baseline / recruitment date ----
+recruit_col <- "Date of attending assessment centre | Instance 0"
+
+parse_ukb_date <- function(x) {
+  x <- as.character(x)
+  d <- suppressWarnings(ymd(x))
+  miss <- is.na(d)
+  if (any(miss)) d[miss] <- suppressWarnings(dmy(x[miss]))
+  miss <- is.na(d)
+  if (any(miss)) d[miss] <- suppressWarnings(ym(x[miss]))
+  as.Date(d)
+}
+
+if (!"recruit_date" %in% names(DT)) {
+  if (!recruit_col %in% names(DT)) stop(paste("Column not found:", recruit_col))
+  DT[, recruit_date := parse_ukb_date(get(recruit_col))]
+}
+
+# ---- Columns to melt (ICD and diagnosis dates) ----
+type_pat <- "^Type of cancer: ICD10 \\| Instance"
+date_pat <- "^Date of cancer diagnosis \\| Instance"
+
+if (!length(grep(type_pat, names(DT))) || !length(grep(date_pat, names(DT)))) {
+  stop("Could not find the expected ICD10 / diagnosis date columns. Check the names/patterns.")
+}
+
+# IMPORTANT: do NOT set value.name when using named patterns
+long <- melt(
+  DT,
+  id.vars = c(id_col, "recruit_date"),
+  measure = patterns(icd = type_pat, dxdate = date_pat),
+  variable.name = "instance"
+)
+# long now has columns: id_col, recruit_date, instance, icd, dxdate
+
+# Keep valid rows and parse
+long <- long[!is.na(icd) & nzchar(trimws(icd)) & !is.na(dxdate)]
+long[, dx_date := parse_ukb_date(dxdate)]
+long <- long[!is.na(dx_date) & !is.na(recruit_date)]
+
+# Extract code token (e.g., "C34.1 Upper..." -> "C34.1")
+long[, icd_code := sub(" .*", "", trimws(icd))]
+
+# Exclusion logic
+long[, malignant := grepl("^C", icd_code)]
+long[, nmsc     := grepl("^C44(\\.|$)", icd_code)]
+long[, exclude_cancer := malignant & !nmsc]
+
+# Time window: baseline to baseline + 12 months
+long[, within_0_12m := dx_date >= recruit_date &
+       dx_date <= (recruit_date %m+% months(12))]
+
+to_exclude <- long[exclude_cancer & within_0_12m, unique(get(id_col))]
+
+Cancer_registery_clean <- DT[!(get(id_col) %in% to_exclude)][, recruit_date := NULL]
+
+message(sprintf(
+  "Excluded %d participants; remaining %d.",
+  length(to_exclude), nrow(Cancer_registery_clean)
+))
+
+```
+### Now created a new table with the self reported cancer 
+```r
+colnames(kept_3)
+
+category_schema <- data.table::fread('/mnt/project/Showcase metadata/category.tsv')
+
+field_schema <- data.table::fread('/mnt/project/Showcase metadata/field.tsv')
+
+system("pip install dxpy --upgrade")
+system("pip install pandas==1.3.5")
+
+pkg <- c("data.table", "dplyr", "stringr")
+
+# Check if packages are not installed and assign the
+# names of the packages not installed to the variable new.pkg
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+# If there are any packages in the list that aren't installed,
+# install them
+if (length(new.pkg)) {
+  install.packages(new.pkg, repos = "http://cran.rstudio.com")
+}
+
+# List of categories to extract fields from
+category_of_interest <- c(100074)
+
+# Individual fields you want to extract
+fields_of_interest <- c(20001)
+
+file_name <- sprintf("table-exporter_%s", format(Sys.time(), "%Y-%m-%d"))
+
+for (cat in category_of_interest) {
+  if (!cat %in% category_schema$category_id) {
+    stop(paste0(cat, ' is not a valid UK Biobank category.'))
+  }
+}
+
+
+for (field in fields_of_interest) {
+  if (!field %in% field_schema$field_id) {
+    stop(paste0(field, ' is not a valid UK Biobank field'))
+  }
+}
+
+
+category_fields_extract <- field_schema |>
+  dplyr::filter(main_category %in% category_of_interest) |>
+  dplyr::pull(field_id)
+
+
+category_fields = c(category_fields_extract, fields_of_interest)
+
+get_dataset_id <- function() {
+  project <- Sys.getenv("DX_PROJECT_CONTEXT_ID")
+  record <- system("dx find data --type Dataset --delimiter ',' | awk -F ',' '{print $5}'", intern = TRUE)
+  dataset <- list()
+  dataset$id <- paste0(project, ":", record)
+  dataset$prefix <- stringr::str_sub(system("dx find data --type Dataset --delimiter ',' | awk -F ',' '{print $4}'", intern = TRUE), 2)
+  return(dataset)
+}
+
+dataset <- get_dataset_id()
+
+if (!file.exists(paste0(dataset$prefix, '.data_dictionary.csv'))) {
+  system(paste0("dx extract_dataset ", dataset$id, " -ddd"), intern = TRUE)
+}
+
+datadict <- data.table::fread(paste0(dataset$prefix,".data_dictionary.csv"))
+
+fields_for_id <- function(field) {
+  
+  regex <- paste0('^p', field, '(?![0-9])')
+  fields <- dplyr::filter(datadict, stringr::str_detect(name, regex)) |>
+    dplyr::pull(name)
+  return(fields)
+}
+
+all_columns <- c('eid', unlist(lapply(category_fields, fields_for_id)))
+
+write.table(all_columns, paste0(file_name, '_fields.txt'), row.names = F, col.names = F, quote = F)
+file_upload <- system(paste0('dx upload ', file_name, '_fields.txt'), intern = TRUE)
+
+file_id <- stringr::str_extract(file_upload[[1]], 'file.*')
+
+system(paste0("dx run table-exporter -idataset_or_cohort_or_dashboard=", dataset$id, " -ifield_names_file_txt=", file_id, " -ientity=participant -ioutput=", file_name, "_data", " -iheader_style=FIELD-TITLE"), intern = TRUE)  
+
+```
