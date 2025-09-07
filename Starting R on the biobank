@@ -1,0 +1,41 @@
+
+## Install the required package 
+
+
+system("pip install dxpy --upgrade")
+system("pip install pandas==1.3.5")
+
+pkg <- c("data.table", "dplyr", "stringr")
+
+##### Check if packages are not installed and assign the names of the packages not installed to the variable new.pkg
+
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+#### If there are any packages in the list that aren't installed,
+# install them
+if (length(new.pkg)) {
+  install.packages(new.pkg, repos = "http://cran.rstudio.com")
+}
+```
+
+## make sure all the categories and fields are present 
+
+```r
+
+category_schema <- data.table::fread('/mnt/project/Showcase metadata/category.tsv')
+
+field_schema <- data.table::fread('/mnt/project/Showcase metadata/field.tsv')
+
+```
+
+## Upload the dataset
+
+### This command uploads the created csv file into the nexus project so can be retrieved later , this is not creating from the scratch so will not have the ids feilds and will not be interactive 
+```r
+file_name <- "data_female" # replace with the csv file name 
+fwrite(data_female, paste0(file_name, ".csv"))
+file_id <- system2(
+  "dx",
+  c("upload", paste0(file_name, ".csv"), "--brief"),  # or ".parquet"
+  stdout = TRUE
+)[1]
+```
