@@ -1,0 +1,30 @@
+Setting up the required Packages 
+```r
+pkg <- c("data.table", "dplyr", "ggplot2", "janitor", "bit64")
+
+# Identify uninstalled packages that are required
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+# Install any packages from the list that are not currently installed
+if (length(new.pkg)) {
+  install.packages(new.pkg, repos = "http://cran.rstudio.com")
+}
+
+# Load packages
+library(data.table) # fast and efficient data handling
+library(dplyr) # for data manipulation
+library(ggplot2) # for data visualization
+library(janitor) # data cleaning utilities
+```
+```
+```
+
+### What files are in my project 
+```r
+system("ls -lah /mnt/project")
+```
+
+### Reading the desired file 
+```r
+data <- fread("/mnt/project/cohort-builder_2025-08-28_data.csv")
+```
+
