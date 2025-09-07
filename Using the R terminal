@@ -1,0 +1,64 @@
+
+#### theses are codes that I can use in the terminal to retrieve the file from the main project to R to work on it in R environment 
+
+```bash
+# 1) Make sure you’re in the right project
+dx env
+
+# This is to see what is in the project - ls to see inside the project ls (folder to see inside it if there is a folder inside the folder use the next one)
+
+dx ls -l /.Backups
+
+# # If there are subfolders, list them too (replace with what you see)
+dx ls -l "/.Backups/rstudio_cohort_r"
+
+# The out put looks like that 
+rstudio-server@a814af8c7bbe:~$ dx env
+Auth token used         GZPKBvY155yG6g39Q19YJFfB2pvzf9BpJbg1P0gb
+API server protocol     http
+API server host         10.0.3.1
+API server port         8124
+Current workspace       project-J1jp2VQJ1V7y1qjGPfzQyQQK
+Current folder          None
+Current user            None
+
+
+rstudio-server@a814af8c7bbe:~$ dx ls -l /.Backups
+Project: Ovarian cancer (project-J1jp2VQJ1V7y1qjGPfzQyQQK)
+Folder : /.Backups
+rstudio_cohorts.R/
+State   Last modified       Size      Name (ID)
+closed  2025-08-31 13:34:52 30.50 MB  rstudio_cohort_building_workflow (file-J2p4yx0J1V7Zz86qpVGggVq3)
+
+
+rstudio-server@a814af8c7bbe:~$ dx ls -l "/.Backups/rstudio_cohorts.R/"
+Project: Ovarian cancer (project-J1jp2VQJ1V7y1qjGPfzQyQQK)
+Folder : /.Backups/rstudio_cohorts.R
+State   Last modified       Size      Name (ID)
+closed  2025-08-31 14:36:55 61.00 MB  rstudio_workbench_ukbrap_trial.Rhablase.2025-08-31T14-36-50.tar.gz (file-J2p5v0jJ1V7ggy15J4KZqq15)
+
+
+# When the file is in folder then fitch the whole folder to the R workspace ( especially if R script)
+
+dx mkdir -p /workbook
+
+dx download "folder name" -o /workbook/
+
+# Example 
+rstudio-server@a814af8c7bbe:~$ dx download -r "/.Backups/rstudio_cohorts.R" -o ~/workbook/
+[                                                            ] Downloaded 0 bytes (0%) /home/rstudio-server/w[===========================================================>] Downloaded 63,968,258 of 63,968,258 bytes (100%) /home/rstudio-server/workbook/rstudio_cohorts.R/rstudio_workbench_ukbrap_trial.Rhablase.2025-08-31T14-36-5[===========================================================>] Completed 63,968,258 of 63,968,258 bytes 
+
+```
+
+Now leave the terminal and go to files on the right where you can see your downloaded file 
+###### most downloaded folder are in tar.gz if R script so you click on it - download it to your local computer and then go to upload - choose - select the R script and it will apper in your files - click on it in the file and it will open the script 
+
+### For data sets ( tables CSV) its easier 
+
+```
+
+dx download Cohort2_data.csv
+
+```
+
+Then leave the terminal and go to the environment import dataset once it appears in the folder and choose import dataset and it will load to the environment 
